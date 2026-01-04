@@ -12,9 +12,11 @@ import type {
   ResourceEffect,
   FlagEffect,
   AddCardEffect,
+  RemoveCargoByTagEffect,
   ChronicleEffect,
   DamageEffect,
   ReputationEffect,
+  DiscoverPortEffect,
   Condition,
   ConditionClause,
   TagCondition,
@@ -578,6 +580,33 @@ function parseEffect(state: ParserState): Effect {
       value,
       span: spanFrom(startToken, current(state), state.filename),
     } satisfies ReputationEffect;
+  }
+  
+  if (keyword === 'discoverPort') {
+    const portId = consume(state, 'IDENTIFIER', 'Expected port ID').value;
+    skipNewlines(state);
+    
+    return {
+      type: 'DiscoverPortEffect',
+      portId,
+      span: spanFrom(startToken, current(state), state.filename),
+    } satisfies DiscoverPortEffect;
+  }
+  
+  if (keyword === 'removeCargoByTag') {
+    const tag = consume(state, 'IDENTIFIER', 'Expected cargo tag').value;
+    let count = 1;
+    if (check(state, 'NUMBER')) {
+      count = parseInt(advance(state).value, 10);
+    }
+    skipNewlines(state);
+    
+    return {
+      type: 'RemoveCargoByTagEffect',
+      tag,
+      count,
+      span: spanFrom(startToken, current(state), state.filename),
+    } satisfies RemoveCargoByTagEffect;
   }
   
   throw new ParseError(

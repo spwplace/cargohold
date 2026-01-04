@@ -19,5 +19,28 @@ They shrug and walk away. Could be gossip. Could be an opportunity.
     Heard a tip about medical supply shortages at Frontier Station. Could be profitable. Could save lives. Both, maybe.
   -> END
 
+* [Ask if they know any other routes]
+  -> routes
+
 * [Ignore dock gossip]
+  -> END
+
+=== routes
+
+The worker looks around, then leans in. "Look, I hear things. The Science Collective at Axiom Observatory pays top credit for artifacts. And if you're brave or stupid enough, Freeport Omega buys salvage, no questions asked."
+
+They slip you a data chip. "Coordinates. Don't tell anyone where you got them."
+
+* [Accept the coordinates]
+  ~ discoverPort port_research_station
+  ~ discoverPort port_pirate_haven
+  ~ flag frontier_med_shortage
+  ~ chronicle "Hidden Routes"
+    A dock worker shared coordinates to ports off the beaten path. Axiom Observatory and Freeport Omega. Opportunities await.
+  -> END
+
+* [Decline—sounds risky]
+  ~ flag frontier_med_shortage
+  ~ chronicle "Market Intelligence"
+    Heard a tip about medical supply shortages at Frontier Station. Turned down more dubious leads.
   -> END

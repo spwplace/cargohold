@@ -50,6 +50,7 @@ export interface CompiledChoice {
 export interface CompiledEffects {
   readonly resources?: Partial<CompiledResources> | undefined;
   readonly addCards?: readonly string[] | undefined;
+  readonly removeCargoByTag?: { tag: string; count: number } | undefined;
   readonly setFlags?: Record<string, boolean | number | string> | undefined;
   readonly addChronicle?: { title: string; text: string } | undefined;
   readonly damage?: { hull?: number; morale?: number } | undefined;
@@ -241,7 +242,9 @@ function compileEffects(effects: Effect[]): CompiledEffects {
   const resources: Partial<CompiledResources> = {};
   const addCards: string[] = [];
   const setFlags: Record<string, boolean | number | string> = {};
+  const discoverPorts: string[] = [];
   let damage: { hull?: number; morale?: number } | undefined;
+  let removeCargoByTag: { tag: string; count: number } | undefined;
   
   for (const effect of effects) {
     switch (effect.type) {
@@ -255,6 +258,10 @@ function compileEffects(effects: Effect[]): CompiledEffects {
         
       case 'AddCardEffect':
         addCards.push(effect.cardId);
+        break;
+        
+      case 'RemoveCargoByTagEffect':
+        removeCargoByTag = { tag: effect.tag, count: effect.count };
         break;
         
       case 'ChronicleEffect':
@@ -275,6 +282,10 @@ function compileEffects(effects: Effect[]): CompiledEffects {
           amount: effect.operator === '-=' ? -effect.value : effect.value,
         };
         break;
+        
+      case 'DiscoverPortEffect':
+        discoverPorts.push(effect.portId);
+        break;
     }
   }
   
@@ -284,8 +295,14 @@ function compileEffects(effects: Effect[]): CompiledEffects {
   if (addCards.length > 0) {
     (result as { addCards: string[] }).addCards = addCards;
   }
+  if (removeCargoByTag) {
+    (result as { removeCargoByTag: { tag: string; count: number } }).removeCargoByTag = removeCargoByTag;
+  }
   if (Object.keys(setFlags).length > 0) {
     (result as { setFlags: Record<string, boolean | number | string> }).setFlags = setFlags;
+  }
+  if (discoverPorts.length > 0) {
+    (result as { discoverPorts: string[] }).discoverPorts = discoverPorts;
   }
   if (damage) {
     (result as { damage: { hull?: number; morale?: number } }).damage = damage;
@@ -317,16 +334,20 @@ export function emitTypeScript(scenelet: CompiledScenelet, importPath: string = 
   const lines: string[] = [];
   
   const hasCards = hasAddCards(scenelet);
+  const hasPorts = hasDiscoverPorts(scenelet);
   
-  const types = hasCards 
-    ? 'Scenelet, SceneletId, CardDefId'
-    : 'Scenelet, SceneletId';
+  const typesList = ['Scenelet', 'SceneletId'];
+  if (hasCards) typesList.push('CardDefId');
+  if (hasPorts) typesList.push('PortId');
   
-  lines.push(`import type { ${types} } from '${importPath}';`);
+  lines.push(`import type { ${typesList.join(', ')} } from '${importPath}';`);
   lines.push('');
   lines.push('const id = (s: string): SceneletId => s as SceneletId;');
   if (hasCards) {
     lines.push('const cardId = (s: string): CardDefId => s as CardDefId;');
+  }
+  if (hasPorts) {
+    lines.push('const portId = (s: string): PortId => s as PortId;');
   }
   lines.push('');
   lines.push(`export const ${sanitizeIdentifier(scenelet.id)}: Scenelet = ${jsonToTypeScript(scenelet, 0, {})};`);
@@ -350,6 +371,22 @@ function hasAddCards(obj: unknown): boolean {
   return Object.values(record).some(value => hasAddCards(value));
 }
 
+function hasDiscoverPorts(obj: unknown): boolean {
+  if (obj === null || obj === undefined) return false;
+  if (typeof obj !== 'object') return false;
+  
+  if (Array.isArray(obj)) {
+    return obj.some(item => hasDiscoverPorts(item));
+  }
+  
+  const record = obj as Record<string, unknown>;
+  if ('discoverPorts' in record && Array.isArray(record.discoverPorts) && record.discoverPorts.length > 0) {
+    return true;
+  }
+  
+  return Object.values(record).some(value => hasDiscoverPorts(value));
+}
+
 function sanitizeIdentifier(id: string): string {
   return id.replace(/[^a-zA-Z0-9_]/g, '_');
 }
@@ -357,6 +394,7 @@ function sanitizeIdentifier(id: string): string {
 interface JsonContext {
   inIdField?: boolean;
   inAddCards?: boolean;
+  inDiscoverPorts?: boolean;
 }
 
 function jsonToTypeScript(obj: unknown, indent: number = 0, ctx: JsonContext = {}): string {
@@ -374,6 +412,9 @@ function jsonToTypeScript(obj: unknown, indent: number = 0, ctx: JsonContext = {
     if (ctx.inAddCards) {
       return `cardId(${JSON.stringify(obj)})`;
     }
+    if (ctx.inDiscoverPorts) {
+      return `portId(${JSON.stringify(obj)})`;
+    }
     if (obj.includes('\n')) {
       return '`' + obj.replace(/`/g, '\\`').replace(/\$/g, '\\$') + '`';
     }
@@ -388,6 +429,9 @@ function jsonToTypeScript(obj: unknown, indent: number = 0, ctx: JsonContext = {
     if (obj.length === 0) return '[]';
     if (ctx.inAddCards && obj.every(item => typeof item === 'string')) {
       return '[' + obj.map(s => `cardId(${JSON.stringify(s)})`).join(', ') + ']';
+    }
+    if (ctx.inDiscoverPorts && obj.every(item => typeof item === 'string')) {
+      return '[' + obj.map(s => `portId(${JSON.stringify(s)})`).join(', ') + ']';
     }
     if (obj.every(item => typeof item === 'string')) {
       return '[' + obj.map(s => JSON.stringify(s)).join(', ') + ']';
@@ -408,6 +452,9 @@ function jsonToTypeScript(obj: unknown, indent: number = 0, ctx: JsonContext = {
       }
       if (key === 'addCards') {
         newCtx.inAddCards = true;
+      }
+      if (key === 'discoverPorts') {
+        newCtx.inDiscoverPorts = true;
       }
       return `${safeKey}: ${jsonToTypeScript(value, indent + 1, newCtx)}`;
     });

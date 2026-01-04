@@ -2,7 +2,8 @@ import type { GameState, CardDef, PortState, CardInstance, AchievementId } from 
 import type { GameController } from '../core/controller.js';
 import type { TriggeredEvent } from '../core/events.js';
 import { ACHIEVEMENTS, getAchievement } from '../content/achievements/index.js';
-import { calculateFuelCost } from '../core/simulate.js';
+import { calculateFuelCost, calculateCargoCapacity, countCargoItems } from '../core/simulate.js';
+import { meetsChoiceRequirements } from '../core/events.js';
 import { DEFAULT_CONFIG } from '../core/types.js';
 
 export type ViewMode = 'narrative' | 'hold' | 'crew' | 'ship' | 'market' | 'travel' | 'chronicle' | 'achievements';
@@ -292,9 +293,12 @@ export function createRenderer(
         return def?.type === 'cargo' || def?.type === 'echo';
       });
 
+    const currentCargo = cargoInstances.length;
+    const cargoCapacity = calculateCargoCapacity(state, cardDefs);
+
     return `
       <div class="view-hold">
-        <h2>Cargo Hold</h2>
+        <h2>Cargo Hold (${currentCargo}/${cargoCapacity})</h2>
         ${cargoInstances.length === 0 ? `
           <p class="empty-state">The hold is empty. Trade awaits.</p>
         ` : `
@@ -343,6 +347,9 @@ export function createRenderer(
         return def?.type === 'module';
       });
 
+    const cargoCapacity = calculateCargoCapacity(state, cardDefs);
+    const currentCargo = countCargoItems(state, cardDefs);
+
     return `
       <div class="view-ship">
         <h2>${state.ship.name}</h2>
@@ -357,8 +364,8 @@ export function createRenderer(
             <span class="stat-value">${Math.floor(state.resources.hull)} / ${state.ship.maxHull}</span>
           </div>
           <div class="stat">
-            <span class="stat-label">Cargo Capacity</span>
-            <span class="stat-value">${state.ship.baseCargoCapacity} base</span>
+            <span class="stat-label">Cargo</span>
+            <span class="stat-value">${currentCargo} / ${cargoCapacity}</span>
           </div>
         </div>
 
@@ -490,6 +497,8 @@ export function createRenderer(
               if (!def || def.type !== 'contract' || !def.contractTerms) return '';
               const terms = def.contractTerms;
               const destPort = state.world.ports[terms.destination];
+              const destinationKnown = state.world.knownPorts.includes(terms.destination);
+              if (!destinationKnown) return '';
               const alreadyAccepted = activeContracts.some(c => c.cardDefId === defId);
               return `
                 <li class="market-item contract-item">
@@ -678,6 +687,7 @@ export function createRenderer(
   function renderEvent(event: TriggeredEvent): string {
     const passage = event.scenelet.passages[event.passageIndex];
     if (!passage) return '<p>Error: Invalid passage</p>';
+    const state = controller.getState();
 
     return `
       <div class="view-event">
@@ -687,11 +697,17 @@ export function createRenderer(
         </div>
         ${passage.choices && passage.choices.length > 0 ? `
           <div class="event-choices">
-            ${passage.choices.map((choice, i) => `
-              <button class="btn btn-choice" data-action="event-choice" data-choice="${i}">
+            ${passage.choices.map((choice, i) => {
+              const canChoose = meetsChoiceRequirements(choice.requirements, state, cardDefs);
+              return `
+              <button class="btn btn-choice ${!canChoose ? 'btn-disabled' : ''}" 
+                data-action="event-choice" 
+                data-choice="${i}"
+                ${!canChoose ? 'disabled title="Requirements not met"' : ''}>
                 ${choice.text}
               </button>
-            `).join('')}
+            `;
+            }).join('')}
           </div>
         ` : `
           <button class="btn btn-primary" data-action="event-dismiss">Continue</button>

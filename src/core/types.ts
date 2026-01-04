@@ -180,7 +180,6 @@ export interface TimeState {
 export interface ShipState {
   name: string;
   class: string;
-  hull: number;
   maxHull: number;
   
   /** Module slots and what's installed */
@@ -313,6 +312,8 @@ export interface GameState {
   flags: Record<string, boolean | number | string>;
   stats: GameStats;
   
+  sceneletCooldowns: Record<SceneletId, number>;
+  
   rngSeed: number;
   rngState: number;
 }
@@ -419,10 +420,14 @@ export interface SceneletEffects {
   readonly resources?: Partial<Resources>;
   readonly addCards?: readonly CardDefId[];
   readonly removeCards?: readonly CardInstanceId[];
+  readonly removeCargoByTag?: { tag: string; count: number };
   readonly setFlags?: Record<string, boolean | number | string>;
   readonly addChronicle?: { title: string; text: string };
   readonly reputation?: { faction: FactionId; amount: number };
   readonly triggerScenelet?: SceneletId;
+  
+  /** Discover new ports (add to knownPorts) */
+  readonly discoverPorts?: readonly PortId[];
   
   /** Damage to ship/crew */
   readonly damage?: { hull?: number; morale?: number; crewCasualties?: number };

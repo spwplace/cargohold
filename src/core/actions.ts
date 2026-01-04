@@ -9,7 +9,7 @@ import {
   type GameConfig,
   DEFAULT_CONFIG,
 } from './types.js';
-import { calculateFuelCost } from './simulate.js';
+import { calculateFuelCost, calculateCargoCapacity, countCargoItems } from './simulate.js';
 
 export interface ActionResult {
   state: GameState;
@@ -104,6 +104,14 @@ function handleTradeBuy(
 
   if (state.resources.credits < totalCost) {
     return { state, success: false, message: 'Insufficient credits' };
+  }
+
+  if (def.type === 'cargo' || def.type === 'echo') {
+    const currentCargo = countCargoItems(state, cardDefs);
+    const capacity = calculateCargoCapacity(state, cardDefs);
+    if (currentCargo + payload.quantity > capacity) {
+      return { state, success: false, message: `Cargo hold full (${currentCargo}/${capacity})` };
+    }
   }
 
   const newInstances: Record<CardInstanceId, CardInstance> = { ...state.cards.instances };

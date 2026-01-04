@@ -4,9 +4,11 @@ import {
   type SceneletEffects,
   type CardDef,
   type ChronicleEntry,
+  type SceneletId,
   createId,
   type CardInstanceId,
 } from './types.js';
+import { calculateCargoCapacity, countCargoItems } from './simulate.js';
 
 export type EventContextType = 'journey' | 'port';
 
@@ -43,9 +45,25 @@ export function selectEvent(
   return { scenelet: eligible[0]!, passageIndex: 0 };
 }
 
+export function recordSceneletTriggered(state: GameState, sceneletId: SceneletId): GameState {
+  return {
+    ...state,
+    sceneletCooldowns: {
+      ...state.sceneletCooldowns,
+      [sceneletId]: state.time.cycle,
+    },
+  };
+}
+
 function meetsRequirements(scenelet: Scenelet, context: EventContext): boolean {
   const req = scenelet.requirements;
   const state = context.state;
+  
+  const lastTriggered = state.sceneletCooldowns[scenelet.id];
+  if (lastTriggered !== undefined && scenelet.cooldown > 0) {
+    const cyclesSince = state.time.cycle - lastTriggered;
+    if (cyclesSince < scenelet.cooldown) return false;
+  }
   
   if (req.context && req.context !== 'any' && req.context !== context.contextType) {
     return false;
@@ -85,7 +103,7 @@ function meetsRequirements(scenelet: Scenelet, context: EventContext): boolean {
   return true;
 }
 
-function getShipTags(state: GameState, cardDefs: Map<string, CardDef>): Set<string> {
+export function getShipTags(state: GameState, cardDefs: Map<string, CardDef>): Set<string> {
   const tags = new Set<string>();
   
   for (const instanceId of state.cards.deck) {
@@ -128,6 +146,93 @@ function getShipTags(state: GameState, cardDefs: Map<string, CardDef>): Set<stri
   return tags;
 }
 
+export function getCrewTags(state: GameState, cardDefs: Map<string, CardDef>): Set<string> {
+  const tags = new Set<string>();
+  
+  for (const instanceId of state.cards.activeCrew) {
+    const instance = state.cards.instances[instanceId];
+    if (!instance) continue;
+    
+    const def = cardDefs.get(instance.cardDefId);
+    if (!def) continue;
+    
+    for (const tag of def.tags) {
+      tags.add(tag);
+    }
+  }
+  
+  return tags;
+}
+
+export function getCargoTags(state: GameState, cardDefs: Map<string, CardDef>): Set<string> {
+  const tags = new Set<string>();
+  
+  for (const instanceId of [...state.cards.deck, ...state.cards.collection]) {
+    const instance = state.cards.instances[instanceId];
+    if (!instance) continue;
+    
+    const def = cardDefs.get(instance.cardDefId);
+    if (!def || (def.type !== 'cargo' && def.type !== 'echo')) continue;
+    
+    for (const tag of def.tags) {
+      tags.add(tag);
+    }
+  }
+  
+  return tags;
+}
+
+export function meetsChoiceRequirements(
+  requirements: Partial<import('./types.js').SceneletRequirements> | undefined,
+  state: GameState,
+  cardDefs: Map<string, CardDef>
+): boolean {
+  if (!requirements) return true;
+  
+  if (requirements.minResources) {
+    for (const [key, min] of Object.entries(requirements.minResources)) {
+      const current = state.resources[key as keyof typeof state.resources];
+      if (current < (min ?? 0)) return false;
+    }
+  }
+  
+  if (requirements.maxResources) {
+    for (const [key, max] of Object.entries(requirements.maxResources)) {
+      const current = state.resources[key as keyof typeof state.resources];
+      if (current > (max ?? Infinity)) return false;
+    }
+  }
+  
+  if (requirements.requiredFlags) {
+    for (const flag of requirements.requiredFlags) {
+      if (!state.flags[flag]) return false;
+    }
+  }
+  
+  if (requirements.excludedFlags) {
+    for (const flag of requirements.excludedFlags) {
+      if (state.flags[flag]) return false;
+    }
+  }
+  
+  if (requirements.shipTags) {
+    const shipTags = getShipTags(state, cardDefs);
+    if (!requirements.shipTags.every(tag => shipTags.has(tag))) return false;
+  }
+  
+  if (requirements.crewTags) {
+    const crewTags = getCrewTags(state, cardDefs);
+    if (!requirements.crewTags.every(tag => crewTags.has(tag))) return false;
+  }
+  
+  if (requirements.cargoTags) {
+    const cargoTags = getCargoTags(state, cardDefs);
+    if (!requirements.cargoTags.every(tag => cargoTags.has(tag))) return false;
+  }
+  
+  return true;
+}
+
 export function applyEffects(
   state: GameState,
   effects: SceneletEffects,
@@ -153,12 +258,20 @@ export function applyEffects(
     const instances = { ...newState.cards.instances };
     const collection = [...newState.cards.collection];
     
+    const currentCargo = countCargoItems(newState, cardDefs);
+    const capacity = calculateCargoCapacity(newState, cardDefs);
+    let cargoAdded = 0;
+    
     for (const cardDefId of effects.addCards) {
       const def = cardDefs.get(cardDefId);
       if (!def) {
         if (typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production') {
           console.warn(`[applyEffects] Unknown card definition: ${cardDefId}`);
         }
+        continue;
+      }
+      
+      if ((def.type === 'cargo' || def.type === 'echo') && currentCargo + cargoAdded >= capacity) {
         continue;
       }
       
@@ -172,6 +285,10 @@ export function applyEffects(
         acquiredAt: { cycle: newState.time.cycle },
       };
       collection.push(instanceId);
+      
+      if (def.type === 'cargo' || def.type === 'echo') {
+        cargoAdded++;
+      }
     }
     
     newState.cards = { ...newState.cards, instances, collection };
@@ -183,6 +300,36 @@ export function applyEffects(
     let deck = [...newState.cards.deck];
     
     for (const instanceId of effects.removeCards) {
+      delete instances[instanceId];
+      collection = collection.filter(id => id !== instanceId);
+      deck = deck.filter(id => id !== instanceId);
+    }
+    
+    newState.cards = { ...newState.cards, instances, collection, deck };
+  }
+  
+  if (effects.removeCargoByTag) {
+    const { tag, count } = effects.removeCargoByTag;
+    const instances = { ...newState.cards.instances };
+    let collection = [...newState.cards.collection];
+    let deck = [...newState.cards.deck];
+    
+    const cargoToRemove: CardInstanceId[] = [];
+    for (const instanceId of [...deck, ...collection]) {
+      if (cargoToRemove.length >= count) break;
+      
+      const instance = instances[instanceId];
+      if (!instance) continue;
+      
+      const def = cardDefs.get(instance.cardDefId);
+      if (!def || (def.type !== 'cargo' && def.type !== 'echo')) continue;
+      
+      if (def.tags.includes(tag as import('./types.js').CardTag)) {
+        cargoToRemove.push(instanceId);
+      }
+    }
+    
+    for (const instanceId of cargoToRemove) {
       delete instances[instanceId];
       collection = collection.filter(id => id !== instanceId);
       deck = deck.filter(id => id !== instanceId);
@@ -208,7 +355,7 @@ export function applyEffects(
   
   if (effects.addChronicle) {
     const entry: ChronicleEntry = {
-      id: createId.chronicleEntry(`event-${Date.now()}`),
+      id: createId.chronicleEntry(`event-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
       type: 'encounter',
       timestamp: { cycle: newState.time.cycle },
       title: effects.addChronicle.title,
@@ -216,6 +363,36 @@ export function applyEffects(
       tags: ['event'],
     };
     newState.chronicle = [...newState.chronicle, entry];
+  }
+  
+  if (effects.reputation) {
+    const { faction, amount } = effects.reputation;
+    const factionState = newState.world.factions[faction];
+    if (factionState) {
+      newState.world = {
+        ...newState.world,
+        factions: {
+          ...newState.world.factions,
+          [faction]: {
+            ...factionState,
+            reputation: Math.max(-100, Math.min(100, factionState.reputation + amount)),
+          },
+        },
+      };
+    }
+  }
+  
+  if (effects.discoverPorts) {
+    const knownPorts = [...newState.world.knownPorts];
+    for (const portId of effects.discoverPorts) {
+      if (!knownPorts.includes(portId) && newState.world.ports[portId]) {
+        knownPorts.push(portId);
+      }
+    }
+    newState.world = {
+      ...newState.world,
+      knownPorts,
+    };
   }
   
   return newState;

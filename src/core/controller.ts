@@ -9,7 +9,7 @@ import {
   advanceCycle,
   incrementJumps,
 } from './simulate.js';
-import { selectEvent, applyEffects, createSeededRng, type TriggeredEvent, type EventContextType } from './events.js';
+import { selectEvent, applyEffects, createSeededRng, meetsChoiceRequirements, recordSceneletTriggered, type TriggeredEvent, type EventContextType } from './events.js';
 import { createInitialState } from './init.js';
 import { DEFAULT_CONFIG, createId } from './types.js';
 import { checkAchievements, getAchievement } from '../content/achievements/index.js';
@@ -265,6 +265,7 @@ export function createGameController(
     };
 
     if (event) {
+      state = recordSceneletTriggered(state, event.scenelet.id);
       currentEvent = event;
     } else {
       currentEvent = createQuietPassageEvent(journeyState.eventsRemaining);
@@ -372,6 +373,7 @@ export function createGameController(
     const event = selectEvent(portScenelets, context);
     
     if (event) {
+      state = recordSceneletTriggered(state, event.scenelet.id);
       currentEvent = event;
       notify();
     }
@@ -415,6 +417,10 @@ export function createGameController(
         completeJourney();
       }
       notify();
+      return;
+    }
+    
+    if (!meetsChoiceRequirements(choice.requirements, state, cardDefs)) {
       return;
     }
     

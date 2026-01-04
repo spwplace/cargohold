@@ -8,7 +8,7 @@ export function createInitialState(): GameState {
   const factionTraders = createId.faction('faction_free_traders');
   
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     
     time: {
       cycle: 0,
@@ -18,7 +18,6 @@ export function createInitialState(): GameState {
     ship: {
       name: 'Holdfast',
       class: 'Light Freighter',
-      hull: 100,
       maxHull: 100,
       modules: {
         sensor: null,
@@ -273,6 +272,10 @@ export function createInitialState(): GameState {
         portHavenPrime,
         createId.port('port_frontier_station'),
         createId.port('port_industrial_complex'),
+        createId.port('port_shadow_market'),
+        createId.port('port_sanctuary'),
+        createId.port('port_research_station'),
+        createId.port('port_pirate_haven'),
       ],
       worldFlags: {},
     },
@@ -294,6 +297,8 @@ export function createInitialState(): GameState {
     },
     
     flags: {},
+    
+    sceneletCooldowns: {},
     
     stats: {
       totalCreditsEarned: 0,

@@ -27,9 +27,17 @@ They gesture to the empty seat across from them.
 
 "You want advice? Here it is: The hold remembers. Every cargo, every crew, every choice—it all leaves marks. Make sure the marks are ones you can live with."
 
-They return to their drink. Conversation over.
+They slide a worn datapad across the table. "Charts. Old routes. Some of them still work."
 
-* [Thank them and leave]
+* [Thank them and accept the charts]
+  ~ morale += 5
+  ~ discoverPort port_shadow_market
+  ~ discoverPort port_sanctuary
+  ~ chronicle "Words from the Old Guard"
+    Met an old captain who remembered the last Beacons. They shared charts to places off the standard lanes.
+  -> END
+
+* [Decline the charts]
   ~ morale += 5
   ~ chronicle "Words from the Old Guard"
     Met an old captain who remembered the last Beacons. Their words will stay with us.

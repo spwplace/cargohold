@@ -169,9 +169,11 @@ export type Effect =
   | ResourceEffect
   | FlagEffect
   | AddCardEffect
+  | RemoveCargoByTagEffect
   | ChronicleEffect
   | DamageEffect
-  | ReputationEffect;
+  | ReputationEffect
+  | DiscoverPortEffect;
 
 /** Modify a resource */
 export interface ResourceEffect extends ASTNode {
@@ -194,6 +196,13 @@ export interface AddCardEffect extends ASTNode {
   readonly cardId: string;
 }
 
+/** Remove cargo by tag */
+export interface RemoveCargoByTagEffect extends ASTNode {
+  readonly type: 'RemoveCargoByTagEffect';
+  readonly tag: string;
+  readonly count: number;
+}
+
 /** Add a chronicle entry */
 export interface ChronicleEffect extends ASTNode {
   readonly type: 'ChronicleEffect';
@@ -214,6 +223,11 @@ export interface ReputationEffect extends ASTNode {
   readonly faction: string;
   readonly operator: '+=' | '-=';
   readonly value: number;
+}
+
+export interface DiscoverPortEffect extends ASTNode {
+  readonly type: 'DiscoverPortEffect';
+  readonly portId: string;
 }
 
 // =============================================================================

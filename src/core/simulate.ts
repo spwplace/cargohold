@@ -191,3 +191,42 @@ export function incrementJumps(state: GameState): GameState {
     },
   };
 }
+
+export function calculateCargoCapacity(
+  state: GameState,
+  cardDefs: Map<string, CardDef>
+): number {
+  let capacity = state.ship.baseCargoCapacity;
+  
+  for (const slot of Object.values(state.ship.modules)) {
+    if (!slot) continue;
+    const instance = state.cards.instances[slot];
+    if (!instance) continue;
+    
+    const def = cardDefs.get(instance.cardDefId);
+    if (!def?.effects.modifiers?.cargoCapacity) continue;
+    
+    capacity += def.effects.modifiers.cargoCapacity;
+  }
+  
+  return capacity;
+}
+
+export function countCargoItems(
+  state: GameState,
+  cardDefs: Map<string, CardDef>
+): number {
+  let count = 0;
+  
+  for (const instanceId of [...state.cards.deck, ...state.cards.collection]) {
+    const instance = state.cards.instances[instanceId];
+    if (!instance) continue;
+    
+    const def = cardDefs.get(instance.cardDefId);
+    if (def?.type === 'cargo' || def?.type === 'echo') {
+      count++;
+    }
+  }
+  
+  return count;
+}

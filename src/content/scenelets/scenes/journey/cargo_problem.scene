@@ -16,6 +16,7 @@ Alarms blare. Something in the cargo bay is destabilizing—the volatile isotope
 You have seconds to decide. A breach could turn the Holdfast into a brief, bright star.
 
 * [Emergency vent the cargo]
+  ~ removeCargoByTag volatile 99
   ~ chronicle "Cargo Jettisoned"
     We vented the unstable cargo before it could breach containment. Credits lost, but we're alive to earn more.
   -> END
