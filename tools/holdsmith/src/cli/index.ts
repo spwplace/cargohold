@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
-import { readFileSync, writeFileSync, readdirSync, statSync, mkdirSync, existsSync } from 'node:fs';
-import { join, dirname, relative } from 'node:path';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { parse } from '../parser/parser.js';
-import { compile, emitTypeScript } from '../compiler/compiler.js';
+import { astToScenelet } from '../compiler/compiler.js';
 import { ParseError } from '../parser/errors.js';
 
 const program = new Command();
@@ -14,87 +14,8 @@ program
   .version('0.1.0');
 
 program
-  .command('compile')
-  .description('Compile .scene files to TypeScript')
-  .argument('<input>', 'Input directory containing .scene files')
-  .option('-o, --output <dir>', 'Output directory', './compiled')
-  .option('--json', 'Output JSON instead of TypeScript')
-  .action((input: string, options: { output: string; json?: boolean }) => {
-    const files = findSceneFiles(input);
-    
-    if (files.length === 0) {
-      console.error(`No .scene files found in ${input}`);
-      process.exit(1);
-    }
-    
-    console.log(`Found ${files.length} scene file(s)`);
-    
-    let hasErrors = false;
-    const compiled: Array<{ file: string; id: string }> = [];
-    
-    for (const file of files) {
-      try {
-        const source = readFileSync(file, 'utf-8');
-        const ast = parse(source, file);
-        const result = compile(ast);
-        
-        for (const warning of result.warnings) {
-          console.warn(`  Warning in ${file}: ${warning.message}`);
-        }
-        
-        const relPath = relative(input, file);
-        const outPath = join(
-          options.output, 
-          relPath.replace(/\.scene$/, options.json ? '.json' : '.ts')
-        );
-        
-        const outDir = dirname(outPath);
-        if (!existsSync(outDir)) {
-          mkdirSync(outDir, { recursive: true });
-        }
-        
-        const relDir = dirname(relPath);
-        const subdirCount = relDir === '.' ? 0 : relDir.split('/').filter(p => p).length;
-        const depth = 3 + subdirCount;
-        const importPath = '../'.repeat(depth) + 'core/types.js';
-        
-        const output = options.json 
-          ? JSON.stringify(result.scenelet, null, 2)
-          : emitTypeScript(result.scenelet, importPath);
-        
-        writeFileSync(outPath, output);
-        console.log(`  Compiled: ${relPath} -> ${relative('.', outPath)}`);
-        
-        compiled.push({ file: relPath, id: result.scenelet.id });
-      } catch (err) {
-        hasErrors = true;
-        if (err instanceof ParseError) {
-          console.error(`  Error in ${file}:`);
-          console.error(`    ${err.message}`);
-        } else {
-          console.error(`  Error in ${file}: ${err}`);
-        }
-      }
-    }
-    
-    if (!options.json && compiled.length > 0) {
-      const indexPath = join(options.output, 'index.ts');
-      const indexContent = generateIndex(compiled);
-      writeFileSync(indexPath, indexContent);
-      console.log(`  Generated: ${relative('.', indexPath)}`);
-    }
-    
-    if (hasErrors) {
-      console.error('\nCompilation completed with errors');
-      process.exit(1);
-    } else {
-      console.log(`\nSuccessfully compiled ${compiled.length} scene(s)`);
-    }
-  });
-
-program
   .command('validate')
-  .description('Validate .scene files without compiling')
+  .description('Validate .scene files')
   .argument('<input>', 'Input directory containing .scene files')
   .action((input: string) => {
     const files = findSceneFiles(input);
@@ -112,7 +33,7 @@ program
       try {
         const source = readFileSync(file, 'utf-8');
         const ast = parse(source, file);
-        const result = compile(ast);
+        const result = astToScenelet(ast);
         
         for (const warning of result.warnings) {
           warningCount++;
@@ -138,13 +59,26 @@ program
 
 program
   .command('parse')
-  .description('Parse a single .scene file and output AST')
+  .description('Parse a single .scene file and output AST as JSON')
   .argument('<file>', 'Scene file to parse')
-  .action((file: string) => {
+  .option('--scenelet', 'Output transformed Scenelet instead of AST')
+  .action((file: string, options: { scenelet?: boolean }) => {
     try {
       const source = readFileSync(file, 'utf-8');
       const ast = parse(source, file);
-      console.log(JSON.stringify(ast, null, 2));
+      
+      if (options.scenelet) {
+        const result = astToScenelet(ast);
+        console.log(JSON.stringify(result.scenelet, null, 2));
+        if (result.warnings.length > 0) {
+          console.error('\nWarnings:');
+          for (const w of result.warnings) {
+            console.error(`  ${w.message}`);
+          }
+        }
+      } else {
+        console.log(JSON.stringify(ast, null, 2));
+      }
     } catch (err) {
       if (err instanceof ParseError) {
         console.error(`Parse error: ${err.message}`);
@@ -174,36 +108,6 @@ function findSceneFiles(dir: string): string[] {
   
   walk(dir);
   return files;
-}
-
-function generateIndex(compiled: Array<{ file: string; id: string }>): string {
-  const lines: string[] = [];
-  
-  lines.push('import type { Scenelet } from \'../../../core/types.js\';');
-  
-  for (const { file, id } of compiled) {
-    const importPath = './' + file.replace(/\.scene$/, '.js').replace(/\\/g, '/');
-    const varName = sanitizeIdentifier(id);
-    lines.push(`import { ${varName} } from '${importPath}';`);
-  }
-  
-  lines.push('');
-  
-  for (const { id } of compiled) {
-    const varName = sanitizeIdentifier(id);
-    lines.push(`export { ${varName} };`);
-  }
-  
-  lines.push('');
-  
-  const imports = compiled.map(c => sanitizeIdentifier(c.id));
-  lines.push(`export const ALL_COMPILED_SCENELETS: Scenelet[] = [${imports.join(', ')}];`);
-  
-  return lines.join('\n');
-}
-
-function sanitizeIdentifier(id: string): string {
-  return id.replace(/[^a-zA-Z0-9_]/g, '_');
 }
 
 program.parse();

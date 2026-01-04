@@ -6,93 +6,88 @@ import type {
   Requirements,
 } from '../parser/ast.js';
 
-export interface CompiledScenelet {
+export type ResourceName = 'credits' | 'fuel' | 'supplies' | 'hull' | 'morale';
+export type ResourceBundle = Partial<Record<ResourceName, number>>;
+
+export interface RuntimeScenelet {
   readonly id: string;
   readonly title: string;
   readonly tags: readonly string[];
-  readonly requirements: CompiledRequirements;
+  readonly requirements: RuntimeRequirements;
   readonly weight: number;
   readonly cooldown: number;
-  readonly passages: CompiledPassage[];
+  readonly passages: RuntimePassage[];
 }
 
-export interface CompiledRequirements {
-  readonly context?: 'journey' | 'port' | 'any' | undefined;
-  readonly shipTags?: readonly string[] | undefined;
-  readonly crewTags?: readonly string[] | undefined;
-  readonly cargoTags?: readonly string[] | undefined;
-  readonly minResources?: Partial<CompiledResources> | undefined;
-  readonly maxResources?: Partial<CompiledResources> | undefined;
-  readonly requiredFlags?: readonly string[] | undefined;
-  readonly excludedFlags?: readonly string[] | undefined;
+export interface RuntimeRequirements {
+  readonly context?: 'journey' | 'port';
+  readonly shipTags?: readonly string[];
+  readonly crewTags?: readonly string[];
+  readonly cargoTags?: readonly string[];
+  readonly minResources?: ResourceBundle;
+  readonly maxResources?: ResourceBundle;
+  readonly requiredFlags?: readonly string[];
+  readonly excludedFlags?: readonly string[];
 }
 
-export interface CompiledResources {
-  credits: number;
-  fuel: number;
-  supplies: number;
-  hull: number;
-  morale: number;
-}
-
-export interface CompiledPassage {
+export interface RuntimePassage {
   readonly text: string;
-  readonly choices?: CompiledChoice[] | undefined;
+  readonly choices?: RuntimeChoice[];
 }
 
-export interface CompiledChoice {
+export interface RuntimeChoice {
   readonly text: string;
-  readonly requirements?: Partial<CompiledRequirements> | undefined;
-  readonly effects: CompiledEffects;
-  readonly nextPassage?: number | undefined;
+  readonly requirements?: Partial<RuntimeRequirements>;
+  readonly effects: RuntimeEffects;
+  readonly nextPassage?: number;
 }
 
-export interface CompiledEffects {
-  readonly resources?: Partial<CompiledResources> | undefined;
-  readonly addCards?: readonly string[] | undefined;
-  readonly setFlags?: Record<string, boolean | number | string> | undefined;
-  readonly addChronicle?: { title: string; text: string } | undefined;
-  readonly damage?: { hull?: number; morale?: number } | undefined;
-  readonly reputation?: { faction: string; amount: number } | undefined;
+export interface RuntimeEffects {
+  readonly resources?: ResourceBundle;
+  readonly addCards?: readonly string[];
+  readonly setFlags?: Record<string, boolean | number | string>;
+  readonly addChronicle?: { title: string; text: string };
+  readonly damage?: { hull?: number; morale?: number };
+  readonly reputation?: { faction: string; amount: number };
 }
 
-export interface CompileResult {
-  readonly scenelet: CompiledScenelet;
-  readonly warnings: CompileWarning[];
+export interface TransformResult {
+  readonly scenelet: RuntimeScenelet;
+  readonly warnings: TransformWarning[];
 }
 
-export interface CompileWarning {
+export interface TransformWarning {
   readonly code: string;
   readonly message: string;
-  readonly line?: number | undefined;
+  readonly line?: number;
 }
 
-export function compile(scene: SceneFile): CompileResult {
-  const warnings: CompileWarning[] = [];
+export function astToScenelet(scene: SceneFile): TransformResult {
+  const warnings: TransformWarning[] = [];
   
   const passageNameToIndex = new Map<string, number>();
   scene.passages.forEach((p, i) => {
     passageNameToIndex.set(p.name, i);
   });
   
-  const compiledPassages: CompiledPassage[] = scene.passages.map(passage => {
+  const passages: RuntimePassage[] = scene.passages.map(astPassage => {
     let proseText = '';
-    const choices: CompiledChoice[] = [];
+    const choices: RuntimeChoice[] = [];
     
-    for (const content of passage.content) {
+    for (const content of astPassage.content) {
       if (content.type === 'Prose') {
         proseText += (proseText ? '\n\n' : '') + content.text;
       } else if (content.type === 'Choice') {
-        const compiledEffects = compileEffects(content.effects);
+        const effects = transformEffects(content.effects);
         
-        let nextPassage: number | undefined;
+        let nextPassageIdx: number | undefined;
         if (content.target) {
           if (content.target.isEnd) {
-            nextPassage = undefined;
+            nextPassageIdx = undefined;
           } else {
             const idx = passageNameToIndex.get(content.target.target);
             if (idx !== undefined) {
-              nextPassage = idx;
+              nextPassageIdx = idx;
             } else {
               warnings.push({
                 code: 'UNKNOWN_PASSAGE',
@@ -103,27 +98,28 @@ export function compile(scene: SceneFile): CompileResult {
           }
         }
         
-        let requirements: Partial<CompiledRequirements> | undefined;
+        let requirements: Partial<RuntimeRequirements> | undefined;
         if (content.condition) {
-          requirements = compileCondition(content.condition);
+          requirements = transformCondition(content.condition);
         }
         
-        choices.push({
+        const choice: RuntimeChoice = {
           text: content.text,
-          requirements,
-          effects: compiledEffects,
-          nextPassage,
-        });
+          effects,
+        };
+        if (requirements) (choice as { requirements: Partial<RuntimeRequirements> }).requirements = requirements;
+        if (nextPassageIdx !== undefined) (choice as { nextPassage: number }).nextPassage = nextPassageIdx;
+        
+        choices.push(choice);
       }
     }
     
-    return {
-      text: proseText,
-      choices: choices.length > 0 ? choices : undefined,
-    };
+    const runtimePassage: RuntimePassage = { text: proseText };
+    if (choices.length > 0) (runtimePassage as { choices: RuntimeChoice[] }).choices = choices;
+    return runtimePassage;
   });
   
-  const compiledRequirements = compileRequirements(
+  const requirements = transformRequirements(
     scene.frontmatter.context,
     scene.frontmatter.requires
   );
@@ -133,22 +129,24 @@ export function compile(scene: SceneFile): CompileResult {
       id: scene.frontmatter.id,
       title: scene.frontmatter.title,
       tags: scene.frontmatter.tags,
-      requirements: compiledRequirements,
+      requirements,
       weight: scene.frontmatter.weight,
       cooldown: scene.frontmatter.cooldown,
-      passages: compiledPassages,
+      passages,
     },
     warnings,
   };
 }
 
-function compileRequirements(
+function transformRequirements(
   context: 'journey' | 'port' | 'any',
   requires?: Requirements
-): CompiledRequirements {
-  const result: CompiledRequirements = {
-    context: context !== 'any' ? context : undefined,
-  };
+): RuntimeRequirements {
+  const result: RuntimeRequirements = {};
+  
+  if (context !== 'any') {
+    (result as { context: 'journey' | 'port' }).context = context;
+  }
   
   if (!requires) return result;
   
@@ -169,32 +167,32 @@ function compileRequirements(
   }
   
   if (requires.minResources && requires.minResources.length > 0) {
-    const min: Partial<CompiledResources> = {};
+    const min: ResourceBundle = {};
     for (const check of requires.minResources) {
       min[check.resource] = check.value;
     }
-    (result as { minResources: Partial<CompiledResources> }).minResources = min;
+    (result as { minResources: ResourceBundle }).minResources = min;
   }
   
   if (requires.maxResources && requires.maxResources.length > 0) {
-    const max: Partial<CompiledResources> = {};
+    const max: ResourceBundle = {};
     for (const check of requires.maxResources) {
       max[check.resource] = check.value;
     }
-    (result as { maxResources: Partial<CompiledResources> }).maxResources = max;
+    (result as { maxResources: ResourceBundle }).maxResources = max;
   }
   
   return result;
 }
 
-function compileCondition(condition: Condition): Partial<CompiledRequirements> {
+function transformCondition(condition: Condition): Partial<RuntimeRequirements> {
   const shipTags: string[] = [];
   const crewTags: string[] = [];
   const cargoTags: string[] = [];
   const requiredFlags: string[] = [];
   const excludedFlags: string[] = [];
-  const minResources: Partial<CompiledResources> = {};
-  const maxResources: Partial<CompiledResources> = {};
+  const minResources: ResourceBundle = {};
+  const maxResources: ResourceBundle = {};
   
   for (const clause of condition.clauses) {
     switch (clause.type) {
@@ -222,23 +220,23 @@ function compileCondition(condition: Condition): Partial<CompiledRequirements> {
     }
   }
   
-  const result: Partial<CompiledRequirements> = {};
+  const result: Partial<RuntimeRequirements> = {};
   
   if (shipTags.length > 0) (result as { shipTags: string[] }).shipTags = shipTags;
   if (crewTags.length > 0) (result as { crewTags: string[] }).crewTags = crewTags;
   if (cargoTags.length > 0) (result as { cargoTags: string[] }).cargoTags = cargoTags;
   if (requiredFlags.length > 0) (result as { requiredFlags: string[] }).requiredFlags = requiredFlags;
   if (excludedFlags.length > 0) (result as { excludedFlags: string[] }).excludedFlags = excludedFlags;
-  if (Object.keys(minResources).length > 0) (result as { minResources: Partial<CompiledResources> }).minResources = minResources;
-  if (Object.keys(maxResources).length > 0) (result as { maxResources: Partial<CompiledResources> }).maxResources = maxResources;
+  if (Object.keys(minResources).length > 0) (result as { minResources: ResourceBundle }).minResources = minResources;
+  if (Object.keys(maxResources).length > 0) (result as { maxResources: ResourceBundle }).maxResources = maxResources;
   
   return result;
 }
 
-function compileEffects(effects: Effect[]): CompiledEffects {
-  const result: CompiledEffects = {};
+function transformEffects(effects: Effect[]): RuntimeEffects {
+  const result: RuntimeEffects = {};
   
-  const resources: Partial<CompiledResources> = {};
+  const resources: ResourceBundle = {};
   const addCards: string[] = [];
   const setFlags: Record<string, boolean | number | string> = {};
   let damage: { hull?: number; morale?: number } | undefined;
@@ -246,7 +244,7 @@ function compileEffects(effects: Effect[]): CompiledEffects {
   for (const effect of effects) {
     switch (effect.type) {
       case 'ResourceEffect':
-        compileResourceEffect(effect, resources);
+        applyResourceEffect(effect, resources);
         break;
         
       case 'FlagEffect':
@@ -279,7 +277,7 @@ function compileEffects(effects: Effect[]): CompiledEffects {
   }
   
   if (Object.keys(resources).length > 0) {
-    (result as { resources: Partial<CompiledResources> }).resources = resources;
+    (result as { resources: ResourceBundle }).resources = resources;
   }
   if (addCards.length > 0) {
     (result as { addCards: string[] }).addCards = addCards;
@@ -294,9 +292,9 @@ function compileEffects(effects: Effect[]): CompiledEffects {
   return result;
 }
 
-function compileResourceEffect(
+function applyResourceEffect(
   effect: ResourceEffect, 
-  resources: Partial<CompiledResources>
+  resources: ResourceBundle
 ): void {
   const current = resources[effect.resource] ?? 0;
   
@@ -311,109 +309,4 @@ function compileResourceEffect(
       resources[effect.resource] = effect.value;
       break;
   }
-}
-
-export function emitTypeScript(scenelet: CompiledScenelet, importPath: string = '../../../core/types.js'): string {
-  const lines: string[] = [];
-  
-  const hasCards = hasAddCards(scenelet);
-  
-  const types = hasCards 
-    ? 'Scenelet, SceneletId, CardDefId'
-    : 'Scenelet, SceneletId';
-  
-  lines.push(`import type { ${types} } from '${importPath}';`);
-  lines.push('');
-  lines.push('const id = (s: string): SceneletId => s as SceneletId;');
-  if (hasCards) {
-    lines.push('const cardId = (s: string): CardDefId => s as CardDefId;');
-  }
-  lines.push('');
-  lines.push(`export const ${sanitizeIdentifier(scenelet.id)}: Scenelet = ${jsonToTypeScript(scenelet, 0, {})};`);
-  
-  return lines.join('\n');
-}
-
-function hasAddCards(obj: unknown): boolean {
-  if (obj === null || obj === undefined) return false;
-  if (typeof obj !== 'object') return false;
-  
-  if (Array.isArray(obj)) {
-    return obj.some(item => hasAddCards(item));
-  }
-  
-  const record = obj as Record<string, unknown>;
-  if ('addCards' in record && Array.isArray(record.addCards) && record.addCards.length > 0) {
-    return true;
-  }
-  
-  return Object.values(record).some(value => hasAddCards(value));
-}
-
-function sanitizeIdentifier(id: string): string {
-  return id.replace(/[^a-zA-Z0-9_]/g, '_');
-}
-
-interface JsonContext {
-  inIdField?: boolean;
-  inAddCards?: boolean;
-}
-
-function jsonToTypeScript(obj: unknown, indent: number = 0, ctx: JsonContext = {}): string {
-  const pad = '  '.repeat(indent);
-  const padInner = '  '.repeat(indent + 1);
-  
-  if (obj === null || obj === undefined) {
-    return 'undefined';
-  }
-  
-  if (typeof obj === 'string') {
-    if (ctx.inIdField) {
-      return `id(${JSON.stringify(obj)})`;
-    }
-    if (ctx.inAddCards) {
-      return `cardId(${JSON.stringify(obj)})`;
-    }
-    if (obj.includes('\n')) {
-      return '`' + obj.replace(/`/g, '\\`').replace(/\$/g, '\\$') + '`';
-    }
-    return JSON.stringify(obj);
-  }
-  
-  if (typeof obj === 'number' || typeof obj === 'boolean') {
-    return String(obj);
-  }
-  
-  if (Array.isArray(obj)) {
-    if (obj.length === 0) return '[]';
-    if (ctx.inAddCards && obj.every(item => typeof item === 'string')) {
-      return '[' + obj.map(s => `cardId(${JSON.stringify(s)})`).join(', ') + ']';
-    }
-    if (obj.every(item => typeof item === 'string')) {
-      return '[' + obj.map(s => JSON.stringify(s)).join(', ') + ']';
-    }
-    const items = obj.map(item => jsonToTypeScript(item, indent + 1, ctx));
-    return '[\n' + padInner + items.join(',\n' + padInner) + ',\n' + pad + ']';
-  }
-  
-  if (typeof obj === 'object') {
-    const entries = Object.entries(obj).filter(([, v]) => v !== undefined);
-    if (entries.length === 0) return '{}';
-    
-    const props = entries.map(([key, value]) => {
-      const safeKey = /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key) ? key : JSON.stringify(key);
-      const newCtx: JsonContext = {};
-      if (key === 'id' && typeof value === 'string') {
-        newCtx.inIdField = true;
-      }
-      if (key === 'addCards') {
-        newCtx.inAddCards = true;
-      }
-      return `${safeKey}: ${jsonToTypeScript(value, indent + 1, newCtx)}`;
-    });
-    
-    return '{\n' + padInner + props.join(',\n' + padInner) + ',\n' + pad + '}';
-  }
-  
-  return String(obj);
 }

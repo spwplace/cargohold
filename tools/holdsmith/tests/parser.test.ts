@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { lex } from '../src/parser/lexer.js';
 import { parse } from '../src/parser/parser.js';
-import { compile } from '../src/compiler/compiler.js';
+import { astToScenelet } from '../src/compiler/compiler.js';
 
 const FIXTURES_DIR = new URL('./fixtures/valid/', import.meta.url).pathname;
 
@@ -163,7 +163,7 @@ describe('Compiler', () => {
   it('compiles simple.scene to Scenelet structure', () => {
     const source = readFileSync(`${FIXTURES_DIR}/simple.scene`, 'utf-8');
     const ast = parse(source, 'simple.scene');
-    const result = compile(ast);
+    const result = astToScenelet(ast);
     
     expect(result.scenelet.id).toBe('simple_test');
     expect(result.scenelet.title).toBe('Simple Test Scene');
@@ -175,33 +175,33 @@ describe('Compiler', () => {
   it('compiles resource effects correctly', () => {
     const source = readFileSync(`${FIXTURES_DIR}/simple.scene`, 'utf-8');
     const ast = parse(source, 'simple.scene');
-    const result = compile(ast);
+    const result = astToScenelet(ast);
     
-    const firstChoice = result.scenelet.passages[0]!.choices[0]!;
+    const firstChoice = result.scenelet.passages[0]!.choices![0]!;
     expect(firstChoice.effects?.resources?.credits).toBe(10);
     
-    const secondChoice = result.scenelet.passages[0]!.choices[1]!;
+    const secondChoice = result.scenelet.passages[0]!.choices![1]!;
     expect(secondChoice.effects?.resources?.morale).toBe(-5);
   });
 
   it('compiles branching passages with navigation', () => {
     const source = readFileSync(`${FIXTURES_DIR}/branching.scene`, 'utf-8');
     const ast = parse(source, 'branching.scene');
-    const result = compile(ast);
+    const result = astToScenelet(ast);
     
     expect(result.scenelet.passages).toHaveLength(3);
     
-    const goLeftChoice = result.scenelet.passages[0]!.choices[0]!;
+    const goLeftChoice = result.scenelet.passages[0]!.choices![0]!;
     expect(goLeftChoice.nextPassage).toBe(1);
     
-    const goRightChoice = result.scenelet.passages[0]!.choices[1]!;
+    const goRightChoice = result.scenelet.passages[0]!.choices![1]!;
     expect(goRightChoice.nextPassage).toBe(2);
   });
 
   it('compiles requirements from frontmatter', () => {
     const source = readFileSync(`${FIXTURES_DIR}/branching.scene`, 'utf-8');
     const ast = parse(source, 'branching.scene');
-    const result = compile(ast);
+    const result = astToScenelet(ast);
     
     expect(result.scenelet.requirements?.shipTags).toEqual(['sensor']);
     expect(result.scenelet.requirements?.minResources?.credits).toBe(50);
@@ -210,9 +210,9 @@ describe('Compiler', () => {
   it('compiles choice conditions to requirements', () => {
     const source = readFileSync(`${FIXTURES_DIR}/branching.scene`, 'utf-8');
     const ast = parse(source, 'branching.scene');
-    const result = compile(ast);
+    const result = astToScenelet(ast);
     
-    const goLeftChoice = result.scenelet.passages[0]!.choices[0]!;
+    const goLeftChoice = result.scenelet.passages[0]!.choices![0]!;
     expect(goLeftChoice.requirements?.crewTags).toEqual(['engineering']);
   });
 });
